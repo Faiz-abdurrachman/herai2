@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	inlivesfu "github.com/inlivedev/sfu"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -38,6 +40,8 @@ type Client struct {
 	pc             *webrtc.PeerConnection
 	senders        map[string]*webrtc.RTPSender
 	pendingICE     []webrtc.ICECandidateInit
+	sfuClient      *inlivesfu.Client
+	sfuAnswerChan  chan webrtc.SessionDescription
 	stateMu        sync.RWMutex
 	screenActive   bool
 	screenStreamID string
@@ -48,6 +52,7 @@ type Client struct {
 
 type Room struct {
 	clients map[string]*Client
+	sfuRoom *inlivesfu.Room
 	tracks  map[string]*PublishedTrack
 }
 
@@ -65,8 +70,10 @@ type RoomInfo struct {
 }
 
 type Hub struct {
-	mu    sync.RWMutex
-	rooms map[string]*Room
+	mu      sync.RWMutex
+	ctx     context.Context
+	manager *inlivesfu.Manager
+	rooms   map[string]*Room
 }
 
 var upgrader = websocket.Upgrader{
@@ -82,7 +89,14 @@ func main() {
 	addr := flag.String("addr", ":"+defaultPort, "HTTP listen address")
 	flag.Parse()
 
-	hub := &Hub{rooms: make(map[string]*Room)}
+	ctx := context.Background()
+	sfuOptions := inlivesfu.DefaultOptions()
+	sfuOptions.IceServers = pionICEServers()
+	hub := &Hub{
+		ctx:     ctx,
+		manager: inlivesfu.NewManager(ctx, "herai-signaling", sfuOptions),
+		rooms:   make(map[string]*Room),
+	}
 
 	http.HandleFunc("/__app-auth", handleAppAuth)
 	http.HandleFunc("/__app-logout", handleAppLogout)
@@ -154,12 +168,13 @@ func serveWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		id:      r.URL.Query().Get("clientId"),
-		room:    r.URL.Query().Get("room"),
-		hub:     hub,
-		conn:    conn,
-		send:    make(chan SignalMessage, 4096),
-		senders: make(map[string]*webrtc.RTPSender),
+		id:            r.URL.Query().Get("clientId"),
+		room:          r.URL.Query().Get("room"),
+		hub:           hub,
+		conn:          conn,
+		send:          make(chan SignalMessage, 4096),
+		senders:       make(map[string]*webrtc.RTPSender),
+		sfuAnswerChan: make(chan webrtc.SessionDescription, 8),
 	}
 	if client.id == "" || client.room == "" {
 		_ = conn.WriteJSON(SignalMessage{Type: "error", Payload: mustRaw(`{"message":"clientId and room are required"}`)})
@@ -178,7 +193,18 @@ func (h *Hub) join(client *Client) {
 
 	room := h.rooms[client.room]
 	if room == nil {
-		room = &Room{clients: make(map[string]*Client), tracks: make(map[string]*PublishedTrack)}
+		roomOptions := inlivesfu.DefaultRoomOptions()
+		roomOptions.Bitrates.InitialBandwidth = 900_000
+		sfuRoom, err := h.manager.NewRoom(client.room, client.room, inlivesfu.RoomTypeLocal, roomOptions)
+		if err != nil {
+			log.Printf("failed to create inlive sfu room=%s: %v", client.room, err)
+			return
+		}
+		room = &Room{
+			clients: make(map[string]*Client),
+			sfuRoom: sfuRoom,
+			tracks:  make(map[string]*PublishedTrack),
+		}
 		h.rooms[client.room] = room
 	}
 
@@ -221,6 +247,11 @@ func (h *Hub) leave(client *Client) {
 	}
 
 	client.markClosed()
+	if room.sfuRoom != nil {
+		if err := room.sfuRoom.StopClient(client.id); err != nil {
+			log.Printf("failed to stop inlive sfu client=%s room=%s: %v", client.id, client.room, err)
+		}
+	}
 	delete(room.clients, client.id)
 	for trackID, track := range room.tracks {
 		if track.owner == client.id {
@@ -385,38 +416,122 @@ func (h *Hub) handleSFUOffer(client *Client, payload json.RawMessage) {
 		return
 	}
 
-	pc, err := h.ensurePeerConnection(client)
+	sfuClient, err := h.ensureInliveSFUClient(client)
 	if err != nil {
-		log.Printf("failed to create sfu pc for %s: %v", client.id, err)
+		log.Printf("failed to prepare inlive sfu client=%s room=%s: %v", client.id, client.room, err)
 		return
+	}
+
+	answer, err := sfuClient.Negotiate(offer)
+	if err != nil {
+		log.Printf("failed to negotiate inlive sfu offer for %s: %v", client.id, err)
+		return
+	}
+
+	enqueueSignal(client, SignalMessage{Type: "sfu-answer", Room: client.room, From: "server", Payload: mustJSON(answer)})
+}
+
+func (h *Hub) ensureInliveSFUClient(client *Client) (*inlivesfu.Client, error) {
+	client.pcMu.Lock()
+	if client.sfuClient != nil {
+		sfuClient := client.sfuClient
+		client.pcMu.Unlock()
+		return sfuClient, nil
+	}
+	client.pcMu.Unlock()
+
+	h.mu.RLock()
+	room := h.rooms[client.room]
+	h.mu.RUnlock()
+	if room == nil || room.sfuRoom == nil {
+		return nil, inlivesfu.ErrRoomNotFound
+	}
+
+	options := inlivesfu.DefaultClientOptions()
+	options.PacerType = inlivesfu.PacerTypeLeakyBucket
+	options.EnableVoiceDetection = true
+	options.EnableOpusDTX = true
+	options.EnableOpusInbandFEC = true
+	options.ReorderPackets = true
+	options.MinPlayoutDelay = 120
+	options.MaxPlayoutDelay = 320
+
+	sfuClient, err := room.sfuRoom.AddClient(client.id, client.id, options)
+	if err != nil {
+		return nil, err
 	}
 
 	client.pcMu.Lock()
-	defer client.pcMu.Unlock()
+	client.sfuClient = sfuClient
+	client.flushPendingICE(sfuClient)
+	client.pcMu.Unlock()
 
-	if pc.SignalingState() != webrtc.SignalingStateStable {
-		if err := pc.SetLocalDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeRollback}); err != nil {
-			log.Printf("failed to rollback sfu state for %s before remote offer: %v", client.id, err)
+	sfuClient.OnIceCandidate(func(ctx context.Context, candidate *webrtc.ICECandidate) {
+		if candidate == nil {
 			return
 		}
-	}
-	if err := pc.SetRemoteDescription(offer); err != nil {
-		log.Printf("failed to set remote offer for %s: %v", client.id, err)
-		return
-	}
-	client.flushPendingICE(pc)
+		enqueueSignal(client, SignalMessage{Type: "sfu-ice", Room: client.room, From: "server", Payload: mustJSON(candidate.ToJSON())})
+	})
 
-	answer, err := pc.CreateAnswer(nil)
-	if err != nil {
-		log.Printf("failed to create sfu answer for %s: %v", client.id, err)
-		return
-	}
-	if err := pc.SetLocalDescription(answer); err != nil {
-		log.Printf("failed to set local answer for %s: %v", client.id, err)
-		return
-	}
+	sfuClient.OnRenegotiation(func(ctx context.Context, offer webrtc.SessionDescription) (webrtc.SessionDescription, error) {
+		enqueueSignal(client, SignalMessage{Type: "sfu-offer", Room: client.room, From: "server", Payload: mustJSON(&offer)})
+		select {
+		case answer := <-client.sfuAnswerChan:
+			return answer, nil
+		case <-ctx.Done():
+			return webrtc.SessionDescription{}, ctx.Err()
+		case <-time.After(20 * time.Second):
+			return webrtc.SessionDescription{}, context.DeadlineExceeded
+		}
+	})
 
-	enqueueSignal(client, SignalMessage{Type: "sfu-answer", Room: client.room, From: "server", Payload: mustJSON(pc.LocalDescription())})
+	sfuClient.OnTracksAdded(func(tracks []inlivesfu.ITrack) {
+		trackTypes := make(map[string]inlivesfu.TrackType, len(tracks))
+		for _, track := range tracks {
+			trackType := inlivesfu.TrackType(inlivesfu.TrackTypeMedia)
+			if track.Kind() == webrtc.RTPCodecTypeVideo && client.isScreenShareTrack(track.StreamID()) {
+				trackType = inlivesfu.TrackType(inlivesfu.TrackTypeScreen)
+			}
+			trackTypes[track.ID()] = trackType
+		}
+		sfuClient.SetTracksSourceType(trackTypes)
+	})
+
+	sfuClient.OnTracksAvailable(func(tracks []inlivesfu.ITrack) {
+		subscriptions := make([]inlivesfu.SubscribeTrackRequest, 0, len(tracks))
+		trackMeta := make([]map[string]string, 0, len(tracks))
+		for _, track := range tracks {
+			if track.ClientID() == client.id {
+				continue
+			}
+			trackMeta = append(trackMeta, map[string]string{
+				"trackId":  track.ID(),
+				"streamId": track.StreamID(),
+				"clientId": track.ClientID(),
+				"source":   track.SourceType().String(),
+				"kind":     track.Kind().String(),
+			})
+			subscriptions = append(subscriptions, inlivesfu.SubscribeTrackRequest{
+				ClientID: track.ClientID(),
+				TrackID:  track.ID(),
+			})
+		}
+		if len(subscriptions) == 0 {
+			return
+		}
+		enqueueSignal(client, SignalMessage{Type: "sfu-tracks-available", Room: client.room, From: "server", Payload: mustJSON(map[string]any{
+			"tracks": trackMeta,
+		})})
+		if err := sfuClient.SubscribeTracks(subscriptions); err != nil {
+			log.Printf("failed to subscribe inlive sfu tracks client=%s room=%s: %v", client.id, client.room, err)
+		}
+	})
+
+	sfuClient.OnConnectionStateChanged(func(state webrtc.PeerConnectionState) {
+		log.Printf("inlive sfu state client=%s room=%s state=%s", client.id, client.room, state.String())
+	})
+
+	return sfuClient, nil
 }
 
 func (h *Hub) ensurePeerConnection(client *Client) (*webrtc.PeerConnection, error) {
@@ -629,16 +744,13 @@ func (c *Client) handleSFUAnswer(payload json.RawMessage) {
 		return
 	}
 	c.pcMu.Lock()
-	defer c.pcMu.Unlock()
-	if c.pc == nil {
-		return
-	}
-	if c.pc.SignalingState() != webrtc.SignalingStateHaveLocalOffer {
-		log.Printf("ignoring out-of-state sfu answer for %s: state=%s", c.id, c.pc.SignalingState().String())
-		return
-	}
-	if err := c.pc.SetRemoteDescription(answer); err != nil {
-		log.Printf("failed to set sfu answer for %s: %v", c.id, err)
+	answerChan := c.sfuAnswerChan
+	c.pcMu.Unlock()
+
+	select {
+	case answerChan <- answer:
+	default:
+		log.Printf("dropping sfu answer for %s: answer queue full", c.id)
 	}
 }
 
@@ -649,29 +761,27 @@ func (c *Client) handleSFUIce(payload json.RawMessage) {
 		return
 	}
 	c.pcMu.Lock()
-	defer c.pcMu.Unlock()
-	if c.pc == nil {
+	sfuClient := c.sfuClient
+	if sfuClient == nil {
 		c.pendingICE = append(c.pendingICE, candidate)
+		c.pcMu.Unlock()
 		return
 	}
-	if c.pc.RemoteDescription() == nil {
-		c.pendingICE = append(c.pendingICE, candidate)
-		return
-	}
-	if err := c.pc.AddICECandidate(candidate); err != nil {
-		log.Printf("failed to add sfu ice for %s: %v", c.id, err)
+	c.pcMu.Unlock()
+	if err := sfuClient.AddICECandidate(candidate); err != nil {
+		log.Printf("failed to add inlive sfu ice for %s: %v", c.id, err)
 	}
 }
 
-func (c *Client) flushPendingICE(pc *webrtc.PeerConnection) {
+func (c *Client) flushPendingICE(sfuClient *inlivesfu.Client) {
 	if len(c.pendingICE) == 0 {
 		return
 	}
 	pending := c.pendingICE
 	c.pendingICE = nil
 	for _, candidate := range pending {
-		if err := pc.AddICECandidate(candidate); err != nil {
-			log.Printf("failed to flush pending sfu ice for %s: %v", c.id, err)
+		if err := sfuClient.AddICECandidate(candidate); err != nil {
+			log.Printf("failed to flush pending inlive sfu ice for %s: %v", c.id, err)
 		}
 	}
 }
@@ -683,6 +793,7 @@ func (c *Client) closePeerConnection() {
 		_ = c.pc.Close()
 		c.pc = nil
 	}
+	c.sfuClient = nil
 	c.senders = make(map[string]*webrtc.RTPSender)
 	c.pendingICE = nil
 }

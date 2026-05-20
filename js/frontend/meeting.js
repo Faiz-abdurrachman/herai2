@@ -70,6 +70,8 @@ window.initMeetingRoom = function() {
     const peerAudioMonitors = new Map();
     const peerMediaWatchdogs = new Map();
     const pendingSfuIceCandidates = [];
+    const sfuTrackMeta = new Map();
+    const sfuStreamMeta = new Map();
     const clientId = getMeetingClientId();
     const localPresence = {
         id: clientId,
@@ -77,8 +79,7 @@ window.initMeetingRoom = function() {
         mic: true,
         camera: true,
         hand: false,
-        screen: false,
-        videoBg: 'none'
+        screen: false
     };
     let sfuNegotiationInFlight = false;
     let sfuNegotiationQueued = false;
@@ -122,7 +123,6 @@ window.initMeetingRoom = function() {
         localPresence.mic = localStream?.getAudioTracks()[0]?.enabled !== false;
         localPresence.camera = localStream?.getVideoTracks()[0]?.enabled !== false;
         localPresence.screen = Boolean(screenStream);
-        localPresence.videoBg = localStorage.getItem('herai_meeting_video_background') || 'none';
         return { ...localPresence };
     };
     const publishPresence = (to = '') => {
@@ -180,6 +180,12 @@ window.initMeetingRoom = function() {
         pendingIceCandidates.delete(peerId);
         negotiationState.delete(peerId);
         peerRetryCounts.delete(peerId);
+        [...sfuTrackMeta.entries()].forEach(([key, meta]) => {
+            if (meta?.clientId === peerId) sfuTrackMeta.delete(key);
+        });
+        [...sfuStreamMeta.entries()].forEach(([key, meta]) => {
+            if (meta?.clientId === peerId) sfuStreamMeta.delete(key);
+        });
         remoteScreenShares.delete(peerId);
         peerPresence.delete(peerId);
         if (activeScreenOwner === peerId) activeScreenOwner = null;
@@ -398,8 +404,9 @@ window.initMeetingRoom = function() {
         };
         sfuPc.ontrack = event => {
             const stream = event.streams[0] || new MediaStream([event.track]);
-            const isScreen = stream.id?.endsWith(':screen');
-            const ownerId = isScreen ? stream.id.replace(/:screen$/, '') : (stream.id && stream.id !== '-' ? stream.id : `sfu-${event.track.id}`);
+            const meta = sfuTrackMeta.get(event.track.id) || sfuStreamMeta.get(stream.id) || null;
+            const isScreen = meta?.source === 'screen' || stream.id?.endsWith(':screen');
+            const ownerId = meta?.clientId || (isScreen ? stream.id.replace(/:screen$/, '') : (stream.id && stream.id !== '-' ? stream.id : `sfu-${event.track.id}`));
             if (ownerId === clientId) return;
             ensureParticipantTile(ownerId, peerDisplayName(ownerId), peerPresence.get(ownerId) || { id: ownerId, name: peerDisplayName(ownerId), mic: true, camera: true });
             const shareMeta = remoteScreenShares.get(ownerId);
@@ -536,8 +543,7 @@ window.initMeetingRoom = function() {
                 mic: payload?.mic !== false,
                 camera: payload?.camera !== false,
                 hand: payload?.hand === true,
-                screen: payload?.screen === true,
-                videoBg: payload?.videoBg || 'none'
+                screen: payload?.screen === true
             };
             peerNames.set(from, nextPresence.name);
             peerPresence.set(from, nextPresence);
@@ -564,6 +570,16 @@ window.initMeetingRoom = function() {
                     setTimeout(() => negotiateSFU().catch(error => console.warn('Negosiasi SFU tertunda gagal', error)), 80);
                 }
             }
+            return;
+        }
+        if (type === 'sfu-tracks-available') {
+            const tracks = Array.isArray(payload?.tracks) ? payload.tracks : [];
+            tracks.forEach(track => {
+                if (!track?.clientId) return;
+                if (track.trackId) sfuTrackMeta.set(track.trackId, track);
+                if (track.streamId) sfuStreamMeta.set(track.streamId, track);
+                ensureParticipantTile(track.clientId, peerDisplayName(track.clientId), peerPresence.get(track.clientId) || { id: track.clientId, name: peerDisplayName(track.clientId), mic: true, camera: true });
+            });
             return;
         }
         if (type === 'sfu-offer') {
@@ -744,13 +760,7 @@ window.initMeetingRoom = function() {
         publishPresence();
     });
 
-    backgroundSelect?.addEventListener('change', () => {
-        applyVideoBackground(backgroundSelect.value);
-        publishPresence();
-    });
-    const savedBackground = localStorage.getItem('herai_meeting_video_background') || 'none';
-    if (backgroundSelect) backgroundSelect.value = savedBackground;
-    applyVideoBackground(savedBackground);
+    backgroundSelect?.closest('.meeting-bg-control')?.remove();
 
     document.getElementById('btnRaiseMeetingHand')?.addEventListener('click', event => {
         localPresence.hand = !localPresence.hand;
@@ -853,6 +863,8 @@ window.initMeetingRoom = function() {
         peers.clear();
         peerNames.clear();
         peerPresence.clear();
+        sfuTrackMeta.clear();
+        sfuStreamMeta.clear();
         remoteScreenShares.clear();
         peerAudioMonitors.forEach(stopAudioMonitor);
         peerAudioMonitors.clear();
@@ -963,13 +975,6 @@ window.initMeetingRoom = function() {
             badge.innerHTML = '<i class="fas fa-volume-high"></i> Speaking';
             tile.appendChild(badge);
         }
-    }
-
-    function applyVideoBackground(value = 'none') {
-        const safeValue = value || 'none';
-        localPresence.videoBg = safeValue;
-        localStorage.setItem('herai_meeting_video_background', safeValue);
-        updateMeetingTilePresence(clientId, buildLocalPresence());
     }
 
     function toggleTrack(kind) {
@@ -1381,7 +1386,6 @@ function updateMeetingTilePresence(peerId, presence = {}) {
 
     tile.classList.toggle('is-hand-raised', presence.hand === true);
     tile.classList.toggle('is-camera-off', presence.camera === false);
-    applyMeetingVideoBackground(tile, presence.videoBg || 'none');
 
     const name = presence.name || getMeetingPeerName(peerId);
     let initial = tile.querySelector('.meeting-video-initial');
@@ -1409,13 +1413,6 @@ function updateMeetingTilePresence(peerId, presence = {}) {
     }
     mic.innerHTML = '<i class="fas fa-microphone-slash"></i>';
     mic.style.display = presence.mic === false ? 'inline-flex' : 'none';
-}
-
-function applyMeetingVideoBackground(tile, value = 'none') {
-    if (!tile) return;
-    const safeValue = String(value || 'none').replace(/[^a-z0-9_-]/gi, '').toLowerCase() || 'none';
-    tile.classList.remove('meeting-video-bg-blush', 'meeting-video-bg-deep', 'meeting-video-bg-grid', 'meeting-video-bg-blur');
-    if (safeValue !== 'none') tile.classList.add(`meeting-video-bg-${safeValue}`);
 }
 
 function renderMeetingRemoteShareLabel(peerId, displayName = '') {

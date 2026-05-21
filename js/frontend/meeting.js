@@ -103,13 +103,20 @@ window.initMeetingRoom = function() {
         roomInput.value = formatMeetingRoomCode(roomInput.value);
     });
 
-    const setStatus = (value) => {
+    let statusResetTimer = null;
+    const setStatus = (value, options = {}) => {
         if (statusText) statusText.textContent = value;
+        if (options.resetToOngoing) {
+            clearTimeout(statusResetTimer);
+            statusResetTimer = setTimeout(() => {
+                if (statusText) statusText.textContent = 'Pertemuan sedang berlangsung';
+            }, options.delay || 1800);
+        }
     };
     const peerDisplayName = (peerId) => peerPresence.get(peerId)?.name || peerNames.get(peerId) || 'Peserta';
     const announcePeerJoined = (peerId, fallbackName = '') => {
         const name = fallbackName || peerDisplayName(peerId);
-        setStatus(`${name} telah bergabung`);
+        setStatus(`${name} telah bergabung`, { resetToOngoing: true });
         pendingJoinAnnouncements.delete(peerId);
     };
     const roomId = () => sanitizeMeetingRoom(roomInput?.value || '');
@@ -587,10 +594,10 @@ window.initMeetingRoom = function() {
         liveKitRoom
             .on(RoomEvent.ParticipantConnected, participant => {
                 applyLiveKitPresence(participant);
-                setStatus(`${participant.name || participant.identity} telah bergabung`);
+                setStatus(`${participant.name || participant.identity} telah bergabung`, { resetToOngoing: true });
             })
             .on(RoomEvent.ParticipantDisconnected, participant => {
-                setStatus(`${peerDisplayName(participant.identity)} telah keluar`);
+                setStatus(`${peerDisplayName(participant.identity)} telah keluar`, { resetToOngoing: true });
                 closePeer(participant.identity);
             })
             .on(RoomEvent.ParticipantMetadataChanged, (_metadata, participant) => applyLiveKitPresence(participant))
@@ -616,16 +623,27 @@ window.initMeetingRoom = function() {
         await liveKitRoom.localParticipant.setName(displayName()).catch(() => {});
         updateLiveKitMetadata();
         for (const track of localStream?.getTracks?.() || []) {
+            track.enabled = track.kind === 'audio' ? desiredMicEnabled : desiredCameraEnabled;
             const source = track.kind === 'video' ? LK.Track.Source.Camera : LK.Track.Source.Microphone;
-            await liveKitRoom.localParticipant.publishTrack(track, { source }).catch(error => console.warn('Gagal publish track LiveKit', error));
+            const publication = await liveKitRoom.localParticipant.publishTrack(track, { source }).catch(error => {
+                console.warn('Gagal publish track LiveKit', error);
+                return null;
+            });
+            if (publication?.track) {
+                const shouldEnable = track.kind === 'audio' ? desiredMicEnabled : desiredCameraEnabled;
+                if (shouldEnable) publication.track.unmute?.();
+                else publication.track.mute?.();
+            }
         }
+        syncPublishedDeviceState('audio', desiredMicEnabled);
+        syncPublishedDeviceState('video', desiredCameraEnabled);
         liveKitRoom.remoteParticipants?.forEach(participant => {
             applyLiveKitPresence(participant);
             participant.trackPublications?.forEach(publication => {
                 if (publication.track) renderLiveKitTrack(publication.track, publication, participant);
             });
         });
-        setStatus('Meeting server terhubung');
+        setStatus('Pertemuan sedang berlangsung');
     };
     const disconnectLiveKit = () => {
         liveKitRemoteStreams.clear();
@@ -674,7 +692,7 @@ window.initMeetingRoom = function() {
             return;
         }
         if (type === 'peer-left') {
-            setStatus(`${peerDisplayName(from)} telah keluar`);
+            setStatus(`${peerDisplayName(from)} telah keluar`, { resetToOngoing: true });
             closePeer(from);
             return;
         }
@@ -892,7 +910,7 @@ window.initMeetingRoom = function() {
                         sendSignal('peer-info', '', { name: displayName() });
                         publishPresence('');
                         if (USE_SFU_TRANSPORT) await negotiateSFU();
-                        setStatus('Berhasil masuk room');
+                        setStatus('Pertemuan sedang berlangsung');
                         return;
                     }
                     await handleSignal(message);
@@ -1203,6 +1221,7 @@ window.initMeetingRoom = function() {
         if (kind === 'video') desiredCameraEnabled = enabled;
         const track = localStream?.getTracks().find(item => item.kind === kind);
         if (track) track.enabled = enabled;
+        syncPublishedDeviceState(kind, enabled);
         if (kind === 'video') {
             document.getElementById('meetingLocalTile')?.classList.toggle('is-camera-off', !enabled);
             if (previewVideo) previewVideo.style.opacity = enabled ? '1' : '0';
@@ -1219,6 +1238,8 @@ window.initMeetingRoom = function() {
     function applyDesiredDeviceState() {
         localStream?.getAudioTracks().forEach(track => { track.enabled = desiredMicEnabled; });
         localStream?.getVideoTracks().forEach(track => { track.enabled = desiredCameraEnabled; });
+        syncPublishedDeviceState('audio', desiredMicEnabled);
+        syncPublishedDeviceState('video', desiredCameraEnabled);
         document.getElementById('meetingLocalTile')?.classList.toggle('is-camera-off', !desiredCameraEnabled);
         if (previewVideo) previewVideo.style.opacity = desiredCameraEnabled ? '1' : '0';
         syncDeviceButtons();
@@ -1229,6 +1250,35 @@ window.initMeetingRoom = function() {
         setDeviceButtonState(document.getElementById('btnPreviewCamera'), desiredCameraEnabled, 'video');
         setDeviceButtonState(document.getElementById('btnToggleMeetingMic'), desiredMicEnabled, 'microphone');
         setDeviceButtonState(document.getElementById('btnToggleMeetingCamera'), desiredCameraEnabled, 'video');
+    }
+
+    function syncPublishedDeviceState(kind, enabled) {
+        if (meetingTransport === 'livekit' && liveKitRoom?.localParticipant) {
+            const publications = [
+                ...Array.from(liveKitRoom.localParticipant.audioTrackPublications?.values?.() || []),
+                ...Array.from(liveKitRoom.localParticipant.videoTrackPublications?.values?.() || [])
+            ];
+            publications.forEach(publication => {
+                const source = String(publication?.source || publication?.track?.source || '').toLowerCase();
+                const trackKind = publication?.track?.mediaStreamTrack?.kind || publication?.kind || '';
+                const isTarget = kind === 'audio'
+                    ? trackKind === 'audio' || source.includes('microphone')
+                    : (trackKind === 'video' || source.includes('camera')) && !source.includes('screen');
+                if (!isTarget) return;
+                const track = publication.track;
+                track?.mediaStreamTrack && (track.mediaStreamTrack.enabled = enabled);
+                if (enabled) track?.unmute?.();
+                else track?.mute?.();
+            });
+        }
+        const senderKind = kind === 'audio' ? 'audio' : 'video';
+        [...peers.values(), sfuPc].filter(Boolean).forEach(pc => {
+            pc.getSenders?.().forEach(sender => {
+                if (sender.track?.kind === senderKind && sender.track !== screenTrack) {
+                    sender.track.enabled = enabled;
+                }
+            });
+        });
     }
 
     function assertMediaSupport() {
@@ -1525,7 +1575,7 @@ window.initMeetingRoom = function() {
         document.getElementById('meeting-overflow-tile')?.remove();
         const requested = tileViewSelect?.value || 'auto';
         const isCompactViewport = window.matchMedia?.('(max-width: 860px)')?.matches === true;
-        const pageSize = requested === 'auto' ? (isCompactViewport ? 6 : 16) : Number(requested) || 16;
+        const pageSize = requested === 'auto' ? 50 : Number(requested) || 50;
         const totalPages = Math.max(1, Math.ceil(tiles.length / pageSize));
         if (currentPage > totalPages) currentPage = totalPages;
         const start = (currentPage - 1) * pageSize;
@@ -1574,13 +1624,14 @@ window.initMeetingRoom = function() {
         }
         if (remoteGrid) {
             remoteGrid.classList.toggle('has-screen-share', hasScreenShare);
-            remoteGrid.classList.toggle('has-pinned-tile', Boolean(remoteGrid.querySelector('.is-pinned')));
-            remoteGrid.dataset.count = String(Math.min(visibleCount, 16));
-            const cols = getMeetingColumnCount(visibleCount);
-            const effectiveCols = isCompactViewport && !hasScreenShare ? Math.min(cols, 2) : cols;
+            remoteGrid.classList.toggle('has-pinned-tile', Boolean(remoteGrid.querySelector('.is-pinned:not(.is-screen)')));
+            remoteGrid.dataset.count = String(Math.min(visibleCount, 50));
+            remoteGrid.dataset.density = visibleCount > 20 ? 'dense' : visibleCount > 8 ? 'medium' : 'roomy';
+            const cols = getMeetingColumnCount(visibleCount, isCompactViewport);
+            const effectiveCols = cols;
             const rowCount = hasScreenShare
                 ? Math.max(1, Math.ceil(Math.max(1, visibleCount - 1) / (isCompactViewport ? 2 : 1)))
-                : (isCompactViewport ? Math.max(1, Math.ceil(visibleCount / Math.max(1, effectiveCols))) : getMeetingRowCount(visibleCount, effectiveCols));
+                : getMeetingRowCount(visibleCount, effectiveCols, isCompactViewport);
             remoteGrid.style.setProperty('--meeting-cols', String(cols));
             remoteGrid.style.setProperty('--meeting-rows', String(rowCount));
         }
@@ -1602,10 +1653,17 @@ window.initMeetingRoom = function() {
     renderPeopleList();
     syncSidePanels();
 
-    function getMeetingColumnCount(count) {
+    function getMeetingColumnCount(count, isCompact = false) {
+        if (isCompact) {
+            if (count <= 2) return 1;
+            if (count <= 4) return 2;
+            if (count <= 9) return 3;
+            if (count <= 16) return 4;
+            if (count <= 25) return 5;
+            if (count <= 36) return 6;
+            return 7;
+        }
         if (count <= 1) return 1;
-        if (count === 3) return 4;
-        if (count === 5 || count === 7) return 6;
         if (count <= 4) return 2;
         if (count <= 9) return 3;
         if (count <= 12) return 4;
@@ -1613,9 +1671,8 @@ window.initMeetingRoom = function() {
         return 6;
     }
 
-    function getMeetingRowCount(count, cols) {
-        if (count === 3 || count === 5) return 2;
-        if (count === 7) return 3;
+    function getMeetingRowCount(count, cols, isCompact = false) {
+        if (isCompact && count === 2) return 2;
         return Math.max(1, Math.ceil(count / Math.max(1, cols)));
     }
 };

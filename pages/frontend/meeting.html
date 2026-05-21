@@ -463,12 +463,11 @@
     }
     .meeting-remote-grid.has-pinned-tile:not(.has-screen-share) {
         grid-auto-rows: minmax(0, 1fr);
-        grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) !important;
     }
     .meeting-remote-grid.has-pinned-tile:not(.has-screen-share) .meeting-video-tile.is-pinned,
     .meeting-remote-grid.has-pinned-tile:not(.has-screen-share) .meeting-remote-tile.is-pinned {
-        grid-column: 1;
-        grid-row: 1 / span 3;
+        grid-column: auto;
+        grid-row: auto;
         min-height: 0;
     }
     .meeting-remote-grid.has-pinned-tile:not(.has-screen-share) .meeting-video-tile:not(.is-pinned),
@@ -600,7 +599,7 @@
     }
     .meeting-remote-grid .meeting-video-tile,
     .meeting-remote-grid .meeting-remote-tile {
-        aspect-ratio: auto;
+        aspect-ratio: 4 / 5;
         height: 100%;
         min-height: 0;
         width: 100%;
@@ -699,34 +698,6 @@
         .meeting-remote-grid:not(.has-screen-share)[data-count="1"] .meeting-remote-tile {
             justify-self: center;
             max-width: min(100%, 1180px);
-        }
-        .meeting-remote-grid:not(.has-screen-share)[data-count="3"] .meeting-video-tile:nth-child(1),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="3"] .meeting-remote-tile:nth-child(1),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="3"] .meeting-video-tile:nth-child(2),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="3"] .meeting-remote-tile:nth-child(2) {
-            grid-column: span 2;
-        }
-        .meeting-remote-grid:not(.has-screen-share)[data-count="3"] .meeting-video-tile:nth-child(3),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="3"] .meeting-remote-tile:nth-child(3) {
-            grid-column: 2 / span 2;
-        }
-        .meeting-remote-grid:not(.has-screen-share)[data-count="5"] .meeting-video-tile:nth-child(-n+2),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="5"] .meeting-remote-tile:nth-child(-n+2) {
-            grid-column: span 3;
-        }
-        .meeting-remote-grid:not(.has-screen-share)[data-count="5"] .meeting-video-tile:nth-child(n+3),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="5"] .meeting-remote-tile:nth-child(n+3) {
-            grid-column: span 2;
-        }
-        .meeting-remote-grid:not(.has-screen-share)[data-count="7"] .meeting-video-tile:nth-child(-n+2),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="7"] .meeting-remote-tile:nth-child(-n+2),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="7"] .meeting-video-tile:nth-child(n+6),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="7"] .meeting-remote-tile:nth-child(n+6) {
-            grid-column: span 3;
-        }
-        .meeting-remote-grid:not(.has-screen-share)[data-count="7"] .meeting-video-tile:nth-child(n+3):nth-child(-n+5),
-        .meeting-remote-grid:not(.has-screen-share)[data-count="7"] .meeting-remote-tile:nth-child(n+3):nth-child(-n+5) {
-            grid-column: span 2;
         }
     }
     .meeting-empty-remote {
@@ -1118,7 +1089,6 @@
             aspect-ratio: 16 / 9;
         }
         .meeting-remote-grid {
-            --meeting-cols: 2 !important;
             grid-auto-rows: minmax(0, 1fr);
             grid-template-rows: repeat(var(--meeting-rows, 1), minmax(0, 1fr));
             height: 100%;
@@ -1150,15 +1120,21 @@
         }
         .meeting-remote-grid .meeting-video-tile,
         .meeting-remote-grid .meeting-remote-tile {
+            aspect-ratio: 4 / 5;
+            height: 100%;
+        }
+        .meeting-remote-grid[data-density="medium"] .meeting-video-tile,
+        .meeting-remote-grid[data-density="medium"] .meeting-remote-tile,
+        .meeting-remote-grid[data-density="dense"] .meeting-video-tile,
+        .meeting-remote-grid[data-density="dense"] .meeting-remote-tile {
             aspect-ratio: 1 / 1;
-            height: auto;
         }
         .meeting-page.chat-open .meeting-room-panel,
         .meeting-page.people-open .meeting-room-panel {
             padding-right: 8px;
         }
         .meeting-remote-grid.has-pinned-tile:not(.has-screen-share) {
-            grid-template-columns: 1fr !important;
+            grid-template-columns: repeat(var(--meeting-cols, 1), minmax(0, 1fr)) !important;
         }
         .meeting-remote-grid.has-screen-share .meeting-video-tile.is-pinned,
         .meeting-remote-grid.has-screen-share .meeting-remote-tile.is-pinned,

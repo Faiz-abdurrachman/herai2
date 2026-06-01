@@ -65,6 +65,7 @@
                    targetId === 'nav-video-conference' ||
                    targetId === 'nav-stage' ||
                    targetId === 'nav-competency' ||
+                   targetId === 'nav-retest' ||
                    targetId === 'nav-bootcamp' ||
                    targetId === 'nav-final-project' ||
                    targetId === 'nav-certificates' ||

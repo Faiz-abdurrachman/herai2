@@ -11,8 +11,12 @@ const COMPETENCY_API_URL = '/__gas';
         psychology: { label: 'Psikologi', duration: 60 * 60, description: '50 soal situational judgement' }
     };
     const SECTION_ORDER = ['math', 'logic', 'psychology'];
-    const STORAGE_PREFIX = 'heraiCompetencyState:';
+    const STORAGE_PREFIX = {
+        competency: 'heraiCompetencyState:',
+        retest: 'heraiReTestState:'
+    };
 
+    let testMode = 'competency';
     let participant = null;
     let sessionId = null;
     let questions = [];
@@ -30,7 +34,8 @@ const COMPETENCY_API_URL = '/__gas';
     let latestSnapshot = '';
     let submitted = false;
 
-    window.initCompetencyTest = function() {
+    window.initCompetencyTest = function(options = {}) {
+        testMode = options.mode === 'retest' ? 'retest' : 'competency';
         resetRuntime();
         installAntiCopyGuards();
         bindCompetencyLogin();
@@ -61,16 +66,18 @@ const COMPETENCY_API_URL = '/__gas';
             const nik = document.getElementById('competencyNik').value.replace(/\D/g, '');
             const password = document.getElementById('competencyPassword').value;
             if (nik.length !== 16) return setCompetencyMessage('NIK harus 16 digit.', true);
-            if (!password) return setCompetencyMessage('Password wajib diisi.', true);
+            if (!password) return setCompetencyMessage(isReTest() ? 'Kode unik wajib diisi.' : 'Password wajib diisi.', true);
 
             const btn = document.getElementById('btnCompetencyLogin');
             const original = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memeriksa...';
             try {
-                const login = await postCompetencyApi({ action: 'participantLogin', nik, password });
+                const login = await postCompetencyApi(isReTest()
+                    ? { action: 'retestLogin', nik, access_code: password }
+                    : { action: 'participantLogin', nik, password });
                 participant = login.profile;
-                if (!['lolos', 'accepted', 'accepted_stage_1'].includes(String(participant.status_seleksi || '').toLowerCase()) &&
+                if (!isReTest() && !['lolos', 'accepted', 'accepted_stage_1'].includes(String(participant.status_seleksi || '').toLowerCase()) &&
                     !['accepted_stage_1', 'competency_test', 'competency_submitted'].includes(String(participant.participant_stage || '').toLowerCase())) {
                     throw new Error('Tes kompetensi hanya untuk peserta yang lolos tahap 1.');
                 }
@@ -150,7 +157,7 @@ const COMPETENCY_API_URL = '/__gas';
             document.getElementById('mediaStatus').textContent = 'Kamera & mic aktif';
             latestSnapshot = captureCameraSnapshot();
             const started = await postCompetencyApi({
-                action: 'startCompetencySession',
+                action: actionFor('startCompetencySession', 'startReTestSession'),
                 session_id: sessionId,
                 nik: participant.nik,
                 nama_lengkap: participant.nama_lengkap,
@@ -171,7 +178,7 @@ const COMPETENCY_API_URL = '/__gas';
             document.getElementById('mediaStatus').className = 'monitor-pill bad';
             document.getElementById('mediaStatus').textContent = 'Media ditolak';
             await postCompetencyApi({
-                action: 'startCompetencySession',
+                action: actionFor('startCompetencySession', 'startReTestSession'),
                 nik: participant?.nik || '',
                 nama_lengkap: participant?.nama_lengkap || '',
                 camera_status: 'denied',
@@ -282,7 +289,7 @@ const COMPETENCY_API_URL = '/__gas';
     async function saveCompetencyProgress() {
         if (!sessionId) return;
         await postCompetencyApi({
-            action: 'saveCompetencyAnswer',
+            action: actionFor('saveCompetencyAnswer', 'saveReTestAnswer'),
             session_id: sessionId,
             nik: participant.nik,
             answers,
@@ -307,7 +314,7 @@ const COMPETENCY_API_URL = '/__gas';
         }
 
         const result = await postCompetencyApi({
-            action: 'submitCompetencyTest',
+            action: actionFor('submitCompetencyTest', 'submitReTest'),
             session_id: sessionId,
             nik: participant.nik,
             answers,
@@ -350,7 +357,7 @@ const COMPETENCY_API_URL = '/__gas';
         if (!sessionId) return;
         latestSnapshot = latestSnapshot || captureCameraSnapshot();
         await postCompetencyApi({
-            action: 'heartbeatCompetencySession',
+            action: actionFor('heartbeatCompetencySession', 'heartbeatReTestSession'),
             session_id: sessionId,
             nik: participant.nik,
             status: 'started',
@@ -556,12 +563,12 @@ const COMPETENCY_API_URL = '/__gas';
             updatedAt: new Date().toISOString(),
             ...extra
         };
-        localStorage.setItem(STORAGE_PREFIX + participant.nik, JSON.stringify(state));
+        localStorage.setItem(STORAGE_PREFIX[testMode] + participant.nik, JSON.stringify(state));
     }
 
     function readSavedState(nik) {
         try {
-            return JSON.parse(localStorage.getItem(STORAGE_PREFIX + nik) || 'null');
+            return JSON.parse(localStorage.getItem(STORAGE_PREFIX[testMode] + nik) || 'null');
         } catch {
             return null;
         }
@@ -658,5 +665,13 @@ const COMPETENCY_API_URL = '/__gas';
         return String(value ?? '').replace(/[&<>"']/g, char => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
         }[char]));
+    }
+
+    function isReTest() {
+        return testMode === 'retest';
+    }
+
+    function actionFor(competencyAction, retestAction) {
+        return isReTest() ? retestAction : competencyAction;
     }
 })();

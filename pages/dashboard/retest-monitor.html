@@ -1,0 +1,76 @@
+<div class="dashboard-layout">
+    <div id="sidebar-container"></div>
+
+    <main class="main-content">
+        <header class="topbar">
+            <div class="topbar-left">
+                <h1 class="page-title">Re-Test Tahap 2</h1>
+                <p class="page-subtitle">Generate akses khusus dan pantau sesi tes ulang tanpa mengubah hasil tes utama</p>
+            </div>
+            <div class="topbar-right">
+                <button type="button" id="btnSyncReTest" class="btn-cyber"><i class="fas fa-sync-alt"></i> Sync Re-Test</button>
+            </div>
+        </header>
+
+        <section class="competency-summary-grid">
+            <div class="competency-summary-card"><span>Akses Aktif</span><strong id="retestAuthorizedCount">0</strong></div>
+            <div class="competency-summary-card"><span>Sedang Tes</span><strong id="retestLiveCount">0</strong></div>
+            <div class="competency-summary-card"><span>Submitted</span><strong id="retestSubmittedCount">0</strong></div>
+            <div class="competency-summary-card"><span>Media Aktif</span><strong id="retestMediaCount">0</strong></div>
+        </section>
+
+        <section class="data-section glass-panel">
+            <div class="table-header">
+                <div class="table-title">
+                    <h3>Generate Kode Akses</h3>
+                    <p>Kode baru menggantikan kode lama untuk NIK yang sama.</p>
+                </div>
+            </div>
+            <form id="retestAccessForm" class="retest-access-form">
+                <input type="text" id="retestAccessNik" maxlength="16" inputmode="numeric" placeholder="16 digit NIK" required>
+                <input type="text" id="retestAccessName" placeholder="Nama peserta" required>
+                <input type="text" id="retestAccessNotes" placeholder="Catatan opsional">
+                <button type="submit" id="btnGenerateReTestCode" class="btn-cyber"><i class="fas fa-key"></i> Generate Kode</button>
+            </form>
+            <p id="retestGeneratedMessage" class="profile-message"></p>
+        </section>
+
+        <section class="data-section glass-panel">
+            <div class="table-header">
+                <div class="table-title"><h3>Daftar Akses Re-Test</h3></div>
+            </div>
+            <div class="table-responsive">
+                <table class="cyber-table">
+                    <thead><tr><th>Peserta</th><th>Kode Unik</th><th>Status</th><th>Terakhir Dipakai</th><th>Aksi</th></tr></thead>
+                    <tbody id="retestAccessBody">
+                        <tr><td colspan="5" style="text-align:center; padding:32px; color:var(--text-muted);">Memuat akses Re-Test...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="data-section glass-panel">
+            <div class="table-header">
+                <div class="table-title"><h3>Live Re-Test Monitor</h3></div>
+                <div class="table-controls">
+                    <div class="search-box"><i class="fas fa-search"></i><input type="text" id="retestSearch" placeholder="Cari nama / NIK..."></div>
+                    <select id="retestStatusFilter" class="cyber-select">
+                        <option value="all">Semua Status</option>
+                        <option value="not_started">Belum Mulai</option>
+                        <option value="started">Sedang Tes</option>
+                        <option value="submitted">Submitted</option>
+                        <option value="media_denied">Media Ditolak</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="cyber-table competency-monitor-table">
+                    <thead><tr><th>Peserta</th><th>Status</th><th>Live Camera</th><th>Media</th><th>Progress</th><th>Raw</th><th>Bobot</th><th>Aktivitas</th><th>Update</th></tr></thead>
+                    <tbody id="retestMonitorBody">
+                        <tr><td colspan="9" style="text-align:center; padding:32px; color:var(--text-muted);">Klik Sync Re-Test untuk memperbarui monitor.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</div>

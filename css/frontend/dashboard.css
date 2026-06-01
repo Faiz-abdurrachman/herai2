@@ -770,6 +770,37 @@
     font-size: 1.5rem;
 }
 
+.retest-access-form {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+}
+
+.retest-access-form input {
+    width: 100%;
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--gray-border);
+    border-radius: 6px;
+    background: #ffffff;
+    color: var(--text-dark);
+}
+
+.retest-code {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: monospace;
+    font-weight: 700;
+}
+
+@media (max-width: 980px) {
+    .retest-access-form {
+        grid-template-columns: 1fr;
+    }
+}
+
 .stage-flow {
     display: grid;
     gap: 12px;

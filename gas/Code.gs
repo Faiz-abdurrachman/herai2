@@ -22,6 +22,8 @@ const SHEETS = {
   attendance: 'Attendance',
   competencyQuestions: 'CompetencyQuestions',
   competencySessions: 'CompetencySessions',
+  retestAccess: 'ReTestAccess',
+  retestSessions: 'ReTestSessions',
   aiResults: 'ai-screening-result',
   projects: 'FinalProjects',
   certificates: 'Certificates',
@@ -50,6 +52,8 @@ const SCHEMA = {
   [SHEETS.attendance]: ['session_id', 'participant_rowId', 'nama_lengkap', 'attendance_status', 'score', 'notes', 'updated_at'],
   [SHEETS.competencyQuestions]: ['id', 'section', 'type', 'difficulty', 'question', 'options', 'answer', 'points', 'status'],
   [SHEETS.competencySessions]: ['session_id', 'nik', 'nama_lengkap', 'status', 'camera_status', 'mic_status', 'answered_count', 'total_questions', 'score', 'weighted_score', 'section_scores', 'answers', 'focus_flags', 'page_visible', 'active_section', 'section_remaining', 'completed_sections', 'camera_snapshot', 'history_events', 'started_at', 'updated_at', 'submitted_at'],
+  [SHEETS.retestAccess]: ['access_id', 'nik', 'nama_lengkap', 'access_code', 'status', 'notes', 'created_at', 'updated_at', 'used_at'],
+  [SHEETS.retestSessions]: ['session_id', 'nik', 'nama_lengkap', 'status', 'camera_status', 'mic_status', 'answered_count', 'total_questions', 'score', 'weighted_score', 'section_scores', 'answers', 'focus_flags', 'page_visible', 'active_section', 'section_remaining', 'completed_sections', 'camera_snapshot', 'history_events', 'started_at', 'updated_at', 'submitted_at'],
   [SHEETS.aiResults]: ['rowId', 'nik', 'nama_lengkap', 'ai_summary', 'ai_skills', 'ai_motivation', 'analyzed_at', 'ai_score'],
   [SHEETS.projects]: ['project_id', 'team_id', 'team_name', 'title', 'members', 'institution', 'track', 'project_title', 'mentor', 'deck_url', 'repo_url', 'demo_url', 'overview', 'details', 'score', 'status', 'notes', 'submitted_at'],
   [SHEETS.certificates]: ['certificate_no', 'participant_rowId', 'nama_lengkap', 'final_score', 'status', 'issued_at', 'certificate_url'],
@@ -89,6 +93,15 @@ function doPost(e) {
       submitCompetencyTest: () => submitCompetencyTest(payload),
       getCompetencySessions: () => ({ status: 'success', sessions: getRows(SHEETS.competencySessions) }),
       updateCompetencyDecision: () => updateCompetencyDecision(payload),
+      getReTestAccess: () => getReTestAccess(),
+      generateReTestAccess: () => generateReTestAccess(payload),
+      deleteReTestAccess: () => deleteByKey(SHEETS.retestAccess, 'access_id', payload.access_id),
+      retestLogin: () => retestLogin(payload),
+      startReTestSession: () => startCompetencySession(payload, SHEETS.retestSessions),
+      heartbeatReTestSession: () => heartbeatCompetencySession(payload, SHEETS.retestSessions),
+      saveReTestAnswer: () => heartbeatCompetencySession(payload, SHEETS.retestSessions),
+      submitReTest: () => submitCompetencyTest(payload, SHEETS.retestSessions, { updateParticipant: false }),
+      getReTestSessions: () => ({ status: 'success', sessions: getRows(SHEETS.retestSessions) }),
       getFinalProjects: () => {
         const projects = getRows(SHEETS.projects);
         return { status: 'success', data: projects, projects };
@@ -122,6 +135,16 @@ function setupDatabase() {
   seedDefaults();
 }
 
+function setupReTestDatabase() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  [SHEETS.retestAccess, SHEETS.retestSessions].forEach(name => {
+    const sheet = ss.getSheetByName(name) || ss.insertSheet(name);
+    ensureSchemaHeaders(sheet, SCHEMA[name]);
+    sheet.setFrozenRows(1);
+  });
+  ensureReTestDemoAccess();
+}
+
 function seedDefaults() {
   upsertByKey(SHEETS.admins, 'id_admin', 'super-admin', {
     id_admin: 'super-admin',
@@ -136,6 +159,7 @@ function seedDefaults() {
     upsertByKey(SHEETS.stages, 'stage_id', stage, { stage_id: stage, stage_name: stage, status: 'planned' });
   });
   seedCompetencyQuestions();
+  ensureReTestDemoAccess();
 }
 
 function seedCompetencyQuestions() {
@@ -352,8 +376,83 @@ function getCompetencyQuestions() {
   };
 }
 
-function startCompetencySession(payload) {
-  const sessionId = payload.session_id || ['ct', payload.nik, Date.now()].join('_');
+function getReTestAccess() {
+  ensureReTestDemoAccess();
+  return { status: 'success', access: getRows(SHEETS.retestAccess) };
+}
+
+function ensureReTestDemoAccess() {
+  const accessId = 'rt_demo_3276010101010001';
+  const existing = getRows(SHEETS.retestAccess).find(row => String(row.access_id) === accessId);
+  if (existing) return existing;
+  const now = new Date().toISOString();
+  const demo = {
+    access_id: accessId,
+    nik: '3276010101010001',
+    nama_lengkap: 'Alya Putri Demo',
+    access_code: 'RT-DEMO-2026',
+    status: 'active',
+    notes: 'Akun testing Re-Test',
+    created_at: now,
+    updated_at: now,
+    used_at: ''
+  };
+  addRowObject(SHEETS.retestAccess, demo);
+  return demo;
+}
+
+function generateReTestAccess(payload) {
+  const nik = String(payload.nik || '').replace(/\D/g, '');
+  if (nik.length !== 16) return { status: 'error', message: 'NIK harus 16 digit.' };
+  const participant = findParticipantByNik(nik);
+  const now = new Date().toISOString();
+  const previous = getRows(SHEETS.retestAccess).find(row => String(row.nik) === nik);
+  const access = {
+    access_id: previous && previous.access_id ? previous.access_id : 'rt_' + nik,
+    nik,
+    nama_lengkap: payload.nama_lengkap || (participant && participant.nama_lengkap) || 'Peserta Re-Test',
+    access_code: generateReTestCode(),
+    status: 'active',
+    notes: payload.notes || '',
+    created_at: previous && previous.created_at ? previous.created_at : now,
+    updated_at: now,
+    used_at: previous && previous.used_at ? previous.used_at : ''
+  };
+  upsertByKey(SHEETS.retestAccess, 'access_id', access.access_id, access);
+  return { status: 'success', access };
+}
+
+function generateReTestCode() {
+  return 'RT-' + Utilities.getUuid().replace(/-/g, '').slice(0, 8).toUpperCase();
+}
+
+function retestLogin(payload) {
+  ensureReTestDemoAccess();
+  const nik = String(payload.nik || '').replace(/\D/g, '');
+  const accessCode = String(payload.access_code || payload.code || '').trim().toUpperCase();
+  if (nik.length !== 16) return { status: 'error', message: 'NIK harus 16 digit.' };
+  if (!accessCode) return { status: 'error', message: 'Kode unik wajib diisi.' };
+  const access = getRows(SHEETS.retestAccess).find(row =>
+    String(row.nik || '').replace(/\D/g, '') === nik &&
+    String(row.access_code || '').trim().toUpperCase() === accessCode &&
+    String(row.status || 'active').toLowerCase() === 'active'
+  );
+  if (!access) return { status: 'error', message: 'NIK atau kode unik Re-Test tidak valid.' };
+  updateByKey(SHEETS.retestAccess, 'access_id', access.access_id, { used_at: new Date().toISOString() });
+  return {
+    status: 'success',
+    profile: {
+      nik,
+      nama_lengkap: access.nama_lengkap || 'Peserta Re-Test',
+      retest_access_id: access.access_id
+    }
+  };
+}
+
+function startCompetencySession(payload, sessionSheet) {
+  sessionSheet = sessionSheet || SHEETS.competencySessions;
+  const prefix = sessionSheet === SHEETS.retestSessions ? 'rt' : 'ct';
+  const sessionId = payload.session_id || [prefix, payload.nik, Date.now()].join('_');
   const now = new Date().toISOString();
   const session = {
     session_id: sessionId,
@@ -379,11 +478,12 @@ function startCompetencySession(payload) {
     updated_at: now,
     submitted_at: ''
   };
-  upsertByKey(SHEETS.competencySessions, 'session_id', sessionId, session);
+  upsertByKey(sessionSheet, 'session_id', sessionId, session);
   return { status: 'success', session };
 }
 
-function heartbeatCompetencySession(payload) {
+function heartbeatCompetencySession(payload, sessionSheet) {
+  sessionSheet = sessionSheet || SHEETS.competencySessions;
   if (!payload.session_id) return { status: 'error', message: 'session_id wajib diisi.' };
   const updates = {
     status: payload.status || 'started',
@@ -404,14 +504,16 @@ function heartbeatCompetencySession(payload) {
       section: payload.active_section || '',
       answered_count: Number(payload.answered_count || 0),
       focus_flags: Number(payload.focus_flags || 0)
-    })),
+    }, sessionSheet)),
     updated_at: new Date().toISOString()
   };
-  upsertByKey(SHEETS.competencySessions, 'session_id', payload.session_id, { session_id: payload.session_id, nik: payload.nik, ...updates });
+  upsertByKey(sessionSheet, 'session_id', payload.session_id, { session_id: payload.session_id, nik: payload.nik, ...updates });
   return { status: 'success', session: { session_id: payload.session_id, ...updates } };
 }
 
-function submitCompetencyTest(payload) {
+function submitCompetencyTest(payload, sessionSheet, options) {
+  sessionSheet = sessionSheet || SHEETS.competencySessions;
+  options = options || {};
   if (!payload.session_id) return { status: 'error', message: 'session_id wajib diisi.' };
   const now = new Date().toISOString();
   const scoreResult = calculateCompetencyScores(payload);
@@ -434,12 +536,12 @@ function submitCompetencyTest(payload) {
       section: payload.active_section || '',
       answered_count: Number(payload.total_questions || 0),
       focus_flags: Number(payload.focus_flags || 0)
-    })),
+    }, sessionSheet)),
     updated_at: now,
     submitted_at: now
   };
-  upsertByKey(SHEETS.competencySessions, 'session_id', payload.session_id, { session_id: payload.session_id, nik: payload.nik, ...updates });
-  const participant = findParticipantByNik(payload.nik);
+  upsertByKey(sessionSheet, 'session_id', payload.session_id, { session_id: payload.session_id, nik: payload.nik, ...updates });
+  const participant = options.updateParticipant === false ? null : findParticipantByNik(payload.nik);
   if (participant) {
     updateByKey(SHEETS.participants, 'nik', participant.nik, {
       participant_stage: 'competency_submitted'
@@ -512,8 +614,9 @@ function applyCompetencyVariantText(value, variant) {
   }, String(value || ''));
 }
 
-function appendSessionHistory(sessionId, event) {
-  const session = getRows(SHEETS.competencySessions).find(row => String(row.session_id) === String(sessionId));
+function appendSessionHistory(sessionId, event, sessionSheet) {
+  sessionSheet = sessionSheet || SHEETS.competencySessions;
+  const session = getRows(sessionSheet).find(row => String(row.session_id) === String(sessionId));
   let history = [];
   try {
     history = JSON.parse(session && session.history_events ? session.history_events : '[]');

@@ -1,0 +1,92 @@
+<section class="profile-page competency-test-page retest-page">
+    <div class="container">
+        <div class="profile-auth-card" id="competencyGateView">
+            <div>
+                <span class="profile-badge">Re-Test Seleksi Tahap 2</span>
+                <h1>Re-Test Kompetensi</h1>
+                <p>Kesempatan tes ulang khusus peserta yang memperoleh akses panitia. Masuk menggunakan NIK dan kode unik Re-Test.</p>
+                <div class="competency-info-grid">
+                    <div><strong>Math</strong><span>15 soal • 40 menit</span></div>
+                    <div><strong>Logic</strong><span>50 soal • 50 menit</span></div>
+                    <div><strong>Psikologi</strong><span>50 soal • 60 menit</span></div>
+                </div>
+            </div>
+            <form id="competencyLoginForm" class="profile-form">
+                <label for="competencyNik">NIK Peserta</label>
+                <input type="text" id="competencyNik" maxlength="16" placeholder="16 digit NIK" required>
+                <label for="competencyPassword">Kode Unik Re-Test</label>
+                <input type="password" id="competencyPassword" placeholder="Contoh: RT-AB12CD34" required>
+                <button type="submit" id="btnCompetencyLogin" class="btn btn-primary">Masuk Re-Test</button>
+                <p id="competencyLoginMessage" class="profile-message"></p>
+            </form>
+        </div>
+
+        <div class="participant-dashboard" id="competencyExamView" style="display: none;">
+            <div class="profile-hero-card">
+                <div>
+                    <span class="profile-badge">Live Proctored Re-Test</span>
+                    <h1 id="competencyParticipantName">Re-Test Kompetensi</h1>
+                    <p id="competencyMeta">Math 40 menit • Logic 50 menit • Psikologi 60 menit</p>
+                </div>
+                <div class="profile-actions">
+                    <span class="monitor-pill warn" id="competencyTimer">Math 40:00</span>
+                    <span class="monitor-pill bad" id="mediaStatus">Media belum aktif</span>
+                </div>
+            </div>
+
+            <section class="profile-panel" id="competencyAgreementPanel">
+                <div class="competency-proctor-grid">
+                    <video id="competencyCameraPreview" autoplay muted playsinline></video>
+                    <canvas id="competencySnapshotCanvas" style="display:none;"></canvas>
+                    <div class="competency-rules">
+                        <h3>Persetujuan Tes</h3>
+                        <p>Kamera dan mikrofon wajib diberi izin sebelum masuk halaman soal. Setelah soal terbuka, preview kamera disembunyikan tetapi kamera tetap aktif sampai submit.</p>
+                        <div class="competency-section-summary-grid" id="competencySectionSummary"></div>
+                        <ul class="competency-rule-list">
+                            <li><i class="fas fa-scale-balanced"></i> Jawaban benar bernilai <strong>+1</strong>, salah <strong>-0.3</strong>, kosong <strong>0</strong>.</li>
+                            <li><i class="fas fa-weight-hanging"></i> Nilai dibobotkan: soal yang jarang dijawab benar memiliki bobot lebih besar, soal yang banyak dijawab benar bobotnya lebih kecil.</li>
+                            <li><i class="fas fa-video"></i> Kamera dan mikrofon wajib aktif selama tes.</li>
+                            <li><i class="fas fa-window-restore"></i> Perpindahan tab/window tercatat sebagai focus flag.</li>
+                        </ul>
+                        <button type="button" id="btnStartCompetency" class="btn btn-primary"><i class="fas fa-video"></i> Setuju & Mulai Tes</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="competency-workspace" id="competencyWorkspace" style="display: none;">
+                <aside class="competency-left-nav profile-panel">
+                    <div class="competency-section-tabs" id="competencySectionTabs"></div>
+                    <div class="competency-question-nav" id="competencyQuestionNav"></div>
+                    <p id="competencyProgress" class="profile-message">0/115 soal terjawab</p>
+                    <button type="button" id="btnSubmitCompetency" class="btn btn-primary">Submit Semua Jawaban</button>
+                </aside>
+
+                <main class="profile-panel competency-question-panel">
+                    <div id="competencyActiveQuestion"></div>
+                </main>
+            </section>
+        </div>
+    </div>
+
+    <div class="competency-submit-modal" id="competencySubmitModal">
+        <div class="competency-submit-dialog">
+            <h3>Konfirmasi Submit</h3>
+            <p id="competencySubmitModalText">Masih ada soal kosong. Kosong bernilai 0. Tetap kirim?</p>
+            <div class="competency-question-actions">
+                <button type="button" class="btn btn-outline" id="btnCancelSubmitCompetency">Cek Lagi</button>
+                <button type="button" class="btn btn-primary" id="btnConfirmSubmitCompetency">Tetap Kirim</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="competency-submit-modal" id="competencyNextSectionModal">
+        <div class="competency-submit-dialog">
+            <h3>Konfirmasi Section</h3>
+            <p id="competencyNextSectionModalText">Lanjut ke section berikutnya? Section sebelumnya akan dikunci.</p>
+            <div class="competency-question-actions">
+                <button type="button" class="btn btn-outline" id="btnCancelNextSectionCompetency">Tetap di Section Ini</button>
+                <button type="button" class="btn btn-primary" id="btnConfirmNextSectionCompetency">Setuju Lanjut</button>
+            </div>
+        </div>
+    </div>
+</section>

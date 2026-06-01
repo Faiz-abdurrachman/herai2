@@ -24,6 +24,7 @@ const router = {
         "/profile": "/pages/frontend/profile.html",
         "/meeting": "/pages/frontend/meeting.html",
         "/competency-test": "/pages/frontend/competency-test.html",
+        "/retest": "/pages/frontend/retest.html",
         "/dashboard": "/pages/dashboard/dashboard.html",
         "/dashboard/seleksi": "/pages/dashboard/dashboard.html",
         "/twibbon": "/pages/frontend/twibbon.html",
@@ -36,6 +37,7 @@ const router = {
         "/anti-fraud": "/pages/dashboard/anti-fraud.html",
         "/comm-engine": "/pages/dashboard/comm-engine.html",
         "/competency-monitor": "/pages/dashboard/competency-monitor.html",
+        "/retest-monitor": "/pages/dashboard/retest-monitor.html",
         "/video-conference": "/pages/dashboard/video-conference.html",
         "/stage-control": "/pages/dashboard/stage-control.html",
         "/bootcamp": "/pages/dashboard/bootcamp.html",
@@ -61,6 +63,7 @@ const router = {
         "/x/u3p7v5": "/profile",
         "/x/m7k9p2": "/meeting",
         "/x/t4c8n6": "/competency-test",
+        "/x/rt4s8": "/retest",
         "/x/d8s2h5": "/dashboard",
         "/x/d8s2h5/s1": "/dashboard/seleksi",
         "/x/tw5b1": "/twibbon",
@@ -73,6 +76,7 @@ const router = {
         "/x/fr7c1": "/anti-fraud",
         "/x/cm8e3": "/comm-engine",
         "/x/ct6m2": "/competency-monitor",
+        "/x/rtm6q": "/retest-monitor",
         "/x/vc4o9": "/video-conference",
         "/x/sc1t5": "/stage-control",
         "/x/bc9p3": "/bootcamp",
@@ -190,6 +194,7 @@ const router = {
             "/anti-fraud", 
             "/comm-engine", 
             "/competency-monitor",
+            "/retest-monitor",
             "/video-conference",
             "/stage-control",
             "/bootcamp",
@@ -286,6 +291,8 @@ const router = {
                     window.initParticipantProfile();
                 } else if (path === "/competency-test" && typeof window.initCompetencyTest === "function") {
                     window.initCompetencyTest();
+                } else if (path === "/retest" && typeof window.initCompetencyTest === "function") {
+                    window.initCompetencyTest({ mode: "retest" });
                 } else if (path === "/meeting" && typeof window.initMeetingRoom === "function") {
                     window.initMeetingRoom();
                 } else if (path === "/projects" && typeof window.initProjectsPage === "function") {
@@ -313,6 +320,8 @@ const router = {
                     window.initCommEngine();
                 } else if (path === "/competency-monitor" && typeof window.initCompetencyMonitor === "function") {
                     window.initCompetencyMonitor();
+                } else if (path === "/retest-monitor" && typeof window.initReTestMonitor === "function") {
+                    window.initReTestMonitor();
                 } else if (path === "/video-conference" && typeof window.initVideoConference === "function") {
                     window.initVideoConference();
                 } else if (path === "/assets" && typeof window.initAssets === "function") {
